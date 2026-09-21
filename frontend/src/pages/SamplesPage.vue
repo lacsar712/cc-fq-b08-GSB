@@ -6,6 +6,13 @@
       <q-btn flat icon="refresh" label="刷新" @click="load" :loading="loading" />
       <q-btn
         v-if="auth.role === 'bioops'"
+        flat
+        class="q-ml-sm"
+        label="批量入队"
+        to="/jobs/batch"
+      />
+      <q-btn
+        v-if="auth.role === 'bioops'"
         color="primary"
         class="q-ml-sm"
         label="提交质控作业"

@@ -6,7 +6,10 @@ from app.database import SessionLocal, get_db
 from app.models import Job, JobStage, Sample
 from app.pipeline.runner import create_job_stages, run_pipeline_sync
 from app.schemas import (
+    BatchItemOut,
     HealthOut,
+    JobBatchCreate,
+    JobBatchResult,
     JobCreate,
     JobListItem,
     JobOut,
@@ -28,6 +31,23 @@ def _run_job_background(job_id: int) -> None:
             run_pipeline_sync(db, job)
     finally:
         db.close()
+
+
+def _insert_job(db: Session, background: BackgroundTasks, sample: Sample, username: str) -> Job:
+    """Persist a pending job for a sample, create its stages and enqueue the run."""
+    job = Job(
+        sample_id=sample.id,
+        sample_name=sample.name,
+        status="pending",
+        created_by=username,
+        fastq_snapshot=sample.fastq_content,
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    create_job_stages(db, job.id)
+    background.add_task(_run_job_background, job.id)
+    return job
 
 
 @router.get("/health", response_model=HealthOut)
@@ -62,30 +82,27 @@ def create_job(
 ):
     sample_id = body.sampleId
     fastq_text = (body.fastqText or "").strip() if body.fastqText else ""
-    sample_name = "自定义输入"
-    sample = None
 
     if sample_id is not None:
         sample = db.query(Sample).filter(Sample.id == sample_id).first()
         if not sample:
             raise HTTPException(status_code=404, detail="样例不存在")
-        fastq_text = sample.fastq_content
-        sample_name = sample.name
-    elif not fastq_text:
-        raise HTTPException(status_code=400, detail="请提供 sampleId 或 fastqText")
-
-    job = Job(
-        sample_id=sample.id if sample else None,
-        sample_name=sample_name,
-        status="pending",
-        created_by=user["username"],
-        fastq_snapshot=fastq_text,
-    )
-    db.add(job)
-    db.commit()
-    db.refresh(job)
-    create_job_stages(db, job.id)
-    background.add_task(_run_job_background, job.id)
+        job = _insert_job(db, background, sample, user["username"])
+    else:
+        if not fastq_text:
+            raise HTTPException(status_code=400, detail="请提供 sampleId 或 fastqText")
+        job = Job(
+            sample_id=None,
+            sample_name="自定义输入",
+            status="pending",
+            created_by=user["username"],
+            fastq_snapshot=fastq_text,
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+        create_job_stages(db, job.id)
+        background.add_task(_run_job_background, job.id)
 
     job = (
         db.query(Job)
@@ -94,6 +111,45 @@ def create_job(
         .first()
     )
     return job
+
+
+@router.post("/jobs/batch", response_model=JobBatchResult, status_code=status.HTTP_201_CREATED)
+def create_jobs_batch(
+    body: JobBatchCreate,
+    background: BackgroundTasks,
+    user: dict = Depends(require_bioops),
+    db: Session = Depends(get_db),
+):
+    """批量入队:按勾选顺序逐条创建,每条独立提交,一条失败不中断后续。"""
+    results: list[BatchItemOut] = []
+    for sample_id in body.sampleIds:
+        try:
+            sample = db.query(Sample).filter(Sample.id == sample_id).first()
+            if not sample:
+                results.append(
+                    BatchItemOut(
+                        sample_id=sample_id,
+                        sample_name=f"#{sample_id}",
+                        ok=False,
+                        reason="样例不存在",
+                    )
+                )
+                continue
+            job = _insert_job(db, background, sample, user["username"])
+            results.append(
+                BatchItemOut(sample_id=sample_id, sample_name=sample.name, ok=True, job_id=job.id)
+            )
+        except Exception as exc:  # noqa: BLE001 - 单条失败须记录原因并继续
+            db.rollback()
+            results.append(
+                BatchItemOut(
+                    sample_id=sample_id,
+                    sample_name=f"#{sample_id}",
+                    ok=False,
+                    reason=f"创建失败:{exc}"[:200],
+                )
+            )
+    return JobBatchResult(results=results)
 
 
 @router.get("/jobs", response_model=list[JobListItem])

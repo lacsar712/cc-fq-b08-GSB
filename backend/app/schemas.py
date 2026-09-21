@@ -33,6 +33,24 @@ class JobCreate(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class JobBatchCreate(BaseModel):
+    sampleIds: list[int] = Field(min_length=1)
+
+    model_config = {"populate_by_name": True}
+
+
+class BatchItemOut(BaseModel):
+    sample_id: int
+    sample_name: str
+    ok: bool
+    job_id: int | None = None
+    reason: str | None = None
+
+
+class JobBatchResult(BaseModel):
+    results: list[BatchItemOut]
+
+
 class StageOut(BaseModel):
     id: int
     actor_name: str

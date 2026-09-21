@@ -46,8 +46,9 @@ docker compose up --build
 2. **样例库** 看到 2 条样例 → 选合格样例 **提交质控作业**。
 3. 作业详情页看到四个 Actor 阶段均为成功，指标卡出现 `reads` / `mean_quality` / `n_rate`。
 4. 再跑损坏样例：`ParseActor` = failed，其余 = skipped。
-5. 退出，用 `auditor` / `audit123456` 登录：可看历史与详情，提交作业接口返回 403 / 前端无提交入口。
-6. 健康检查：`curl http://localhost:8184/api/health`
+5. **批量入队** 页：勾选合格与损坏样例各一 → 逐条创建，结果区每行显示成功（作业 #id）或失败原因，单条失败不中断其余 → **历史** 中两条新作业状态不同（success / failed）。
+6. 退出，用 `auditor` / `audit123456` 登录：可看历史与详情，提交作业接口返回 403 / 前端无提交入口，批量入队页被路由守卫挡回历史页。
+7. 健康检查：`curl http://localhost:8184/api/health`
 
 ## API
 
@@ -55,6 +56,7 @@ docker compose up --build
 - `GET  /api/health`
 - `GET  /api/samples`
 - `POST /api/jobs` `{ "sampleId": 1 }` 或 `{ "fastqText": "..." }`
+- `POST /api/jobs/batch` `{ "sampleIds": [1, 2] }` → 逐条创建，返回每行 `{ ok, job_id }` 或 `{ ok: false, reason }`（仅 bioops）
 - `GET  /api/jobs`
 - `GET  /api/jobs/{id}`
 - `GET  /api/jobs/{id}/stages`
@@ -86,5 +88,5 @@ pytest -q
     tests/test_actors.py
   frontend/
     Dockerfile nginx.conf
-    src/pages/{Login,Samples,JobSubmit,JobDetail,JobHistory}Page.vue
+    src/pages/{Login,Samples,JobSubmit,BatchSubmit,JobDetail,JobHistory}Page.vue
 ```
