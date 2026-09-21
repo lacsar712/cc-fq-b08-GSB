@@ -5,6 +5,7 @@
         <q-toolbar-title>FASTQ 质控流水线台</q-toolbar-title>
         <q-btn flat dense label="样例库" to="/samples" />
         <q-btn flat dense label="提交作业" to="/jobs/new" v-if="auth.role === 'bioops'" />
+        <q-btn flat dense label="批量入队" to="/jobs/batch" v-if="auth.role === 'bioops'" />
         <q-btn flat dense label="历史" to="/jobs" />
         <q-space />
         <div class="q-mr-md text-caption">

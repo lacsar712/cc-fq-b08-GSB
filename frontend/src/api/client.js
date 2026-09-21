@@ -62,4 +62,9 @@ export async function createJob(body) {
   return data
 }
 
+export async function createJobsBatch(sampleIds) {
+  const { data } = await api.post('/jobs/batch', { sampleIds })
+  return data
+}
+
 export default api

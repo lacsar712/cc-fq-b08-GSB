@@ -7,6 +7,9 @@ from app.models import Job, JobStage, Sample
 from app.pipeline.runner import create_job_stages, run_pipeline_sync
 from app.schemas import (
     HealthOut,
+    JobBatchCreate,
+    JobBatchItem,
+    JobBatchOut,
     JobCreate,
     JobListItem,
     JobOut,
@@ -60,8 +63,21 @@ def create_job(
     user: dict = Depends(require_bioops),
     db: Session = Depends(get_db),
 ):
-    sample_id = body.sampleId
-    fastq_text = (body.fastqText or "").strip() if body.fastqText else ""
+    job = _create_job_from_sample_or_text(db, body.sampleId, body.fastqText, user["username"])
+    background.add_task(_run_job_background, job.id)
+    return (
+        db.query(Job)
+        .options(joinedload(Job.stages))
+        .filter(Job.id == job.id)
+        .first()
+    )
+
+
+def _create_job_from_sample_or_text(
+    db: Session, sample_id: int | None, fastq_text: str | None, username: str
+) -> Job:
+    """Create a job + stages from a sample id or raw FASTQ text. Raises HTTPException."""
+    fastq_text = (fastq_text or "").strip() if fastq_text else ""
     sample_name = "自定义输入"
     sample = None
 
@@ -78,22 +94,58 @@ def create_job(
         sample_id=sample.id if sample else None,
         sample_name=sample_name,
         status="pending",
-        created_by=user["username"],
+        created_by=username,
         fastq_snapshot=fastq_text,
     )
     db.add(job)
     db.commit()
     db.refresh(job)
     create_job_stages(db, job.id)
-    background.add_task(_run_job_background, job.id)
-
-    job = (
-        db.query(Job)
-        .options(joinedload(Job.stages))
-        .filter(Job.id == job.id)
-        .first()
-    )
     return job
+
+
+@router.post("/jobs/batch", response_model=JobBatchOut)
+def create_jobs_batch(
+    body: JobBatchCreate,
+    background: BackgroundTasks,
+    user: dict = Depends(require_bioops),
+    db: Session = Depends(get_db),
+):
+    """逐条为勾选样例创建并入队;一条失败不中断后面,每行记录成功或原因。"""
+    items: list[JobBatchItem] = []
+    succeeded = 0
+
+    # 去重但保留勾选顺序
+    seen: set[int] = set()
+    sample_ids = [sid for sid in body.sampleIds if not (sid in seen or seen.add(sid))]
+
+    for sample_id in sample_ids:
+        sample = db.query(Sample).filter(Sample.id == sample_id).first()
+        item = JobBatchItem(sample_id=sample_id, sample_name=sample.name if sample else None)
+        try:
+            if not sample:
+                raise HTTPException(status_code=404, detail="样例不存在")
+            job = _create_job_from_sample_or_text(db, sample_id, None, user["username"])
+            background.add_task(_run_job_background, job.id)
+            item.success = True
+            item.job_id = job.id
+            succeeded += 1
+        except HTTPException as exc:
+            db.rollback()
+            item.success = False
+            item.reason = exc.detail if isinstance(exc.detail, str) else "创建失败"
+        except Exception as exc:  # noqa: BLE001 - 单条失败隔离,继续处理后续行
+            db.rollback()
+            item.success = False
+            item.reason = f"创建异常: {exc}"
+        items.append(item)
+
+    return JobBatchOut(
+        total=len(items),
+        succeeded=succeeded,
+        failed=len(items) - succeeded,
+        items=items,
+    )
 
 
 @router.get("/jobs", response_model=list[JobListItem])

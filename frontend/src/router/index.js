@@ -3,6 +3,7 @@ import { useAuthStore } from '../stores/auth'
 import LoginPage from '../pages/LoginPage.vue'
 import SamplesPage from '../pages/SamplesPage.vue'
 import JobSubmitPage from '../pages/JobSubmitPage.vue'
+import JobBatchPage from '../pages/JobBatchPage.vue'
 import JobDetailPage from '../pages/JobDetailPage.vue'
 import JobHistoryPage from '../pages/JobHistoryPage.vue'
 
@@ -13,6 +14,7 @@ const router = createRouter({
     { path: '/', redirect: '/samples' },
     { path: '/samples', name: 'samples', component: SamplesPage },
     { path: '/jobs/new', name: 'job-submit', component: JobSubmitPage, meta: { bioops: true } },
+    { path: '/jobs/batch', name: 'job-batch', component: JobBatchPage, meta: { bioops: true } },
     { path: '/jobs', name: 'jobs', component: JobHistoryPage },
     { path: '/jobs/:id', name: 'job-detail', component: JobDetailPage },
   ],
